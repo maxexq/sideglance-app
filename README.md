@@ -1,6 +1,6 @@
 # Sideglance
 
-Your Claude and Codex usage, and Claude Code notifications, on a Divoom Ditoo Pro. A desktop app for Windows and macOS that sits in the tray or menu bar.
+Your Claude and Codex usage, Claude Code notifications, the weather and a Pomodoro timer, on a Divoom Ditoo Pro. A desktop app for Windows and macOS that sits in the tray or menu bar.
 
 This is the app version of [maxexq/sideglance](https://github.com/maxexq/sideglance), which runs from Python. The app needs no Python.
 
@@ -45,9 +45,23 @@ On the **Notifications** tab, click **Connect Claude Code**. This adds hooks to 
 
 Send any event from your own scripts the same way, for example `job-passed` at the end of a build.
 
+**Weather.** A condition icon and the current temperature, updated every 15 minutes, from [Open-Meteo](https://open-meteo.com) (no key needed). The location is found from your internet address with ipapi.co, ipwho.is or ipinfo.io, tried in turn, or set a city or coordinates on the Weather tab. Choose Celsius or Fahrenheit, and optionally add the weather face after the usage faces. If a fetch fails, the last reading stays; before the first one, the face shows a cloud and `--°`.
+
+**Timer.** A Pomodoro timer (focus 25 minutes, short break 5, long break 15 after the fourth session, all adjustable) with a ring of 60 pixels for the seconds and a dot per session, or a one-off countdown of up to 99 minutes. While a Pomodoro is on, its face covers the other faces. When a phase or the countdown ends, the timer-finished hourglass blinks.
+
 **The device's own screens.** Clock, light, scoreboard, brightness, and a 16x16 drawing pad.
 
-Not in this first release, but in the Python version: weather, the Pomodoro and countdown timers, image and GIF upload, and the hosted page.
+Not in the app yet, but in the Python version: image and GIF upload, and the hosted page.
+
+Every face is drawn the same way as in the Python version: the tests compare them pixel for pixel.
+
+### Moving from the Python version
+
+Stop the Python server first, because both use port 8765. In the Python folder, run `python autostart.py uninstall`. The app's settings are separate, in the folder below, so set your location and timer lengths again in the app.
+
+### One display, one computer
+
+The Ditoo Pro shows up in Bluetooth twice: an entry ending in **Audio** (the speaker) and one ending in **Light** (the display). Sideglance needs the **Light** one, and it can be connected to one computer at a time. To move it to another computer, disconnect it in the first computer's Bluetooth settings, turn the Ditoo off and on, then connect it on the second.
 
 ## Settings and data
 
@@ -67,7 +81,7 @@ The app answers on `http://127.0.0.1:8765` while it runs. Only programs on your 
 | `POST /api/hook/<event>` | show a notification; answers with no body (for hooks) |
 | `POST /api/notify` `{"event": "<event>"}` | the same, from the page; `dismiss` removes it |
 | `GET /api/status` | everything the page shows |
-| `GET /api/scene` | usage and the notification as JSON |
+| `GET /api/scene` | usage, weather, timers and the notification as JSON |
 
 ## Build it yourself
 

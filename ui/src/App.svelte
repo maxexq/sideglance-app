@@ -10,10 +10,9 @@
   import { demoCall, demoNotifications } from './demo.js';
   import { frameAt } from './timeline.js';
 
-  // Served by the Sideglance app, the page talks to it directly. Hosted elsewhere (for example Cloudflare Pages),
-  // it reaches the server on this computer, and falls back to a demo when there is none.
   // Inside the desktop app the page comes from the app itself (tauri://localhost on macOS,
-  // http://tauri.localhost on Windows) and calls the app's local server directly.
+  // http://tauri.localhost on Windows) and calls the app's local server directly. Opened in a
+  // browser at localhost:8765 it is served by that same server.
   const IN_APP = location.protocol === 'tauri:' || location.hostname === 'tauri.localhost';
   const HOSTED = !IN_APP && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   const API = HOSTED || IN_APP ? 'http://127.0.0.1:8765' : '';
@@ -29,7 +28,7 @@
 
   const BLANK = Array(256).fill('#000000');
   const TABS = [
-    ['usage', 'AI usage'], ['notify', 'Notifications'], ['clock', 'Clock'], ['light', 'Light'],
+    ['usage', 'AI usage'], ['weather', 'Weather'], ['timer', 'Timer'], ['notify', 'Notifications'], ['clock', 'Clock'], ['light', 'Light'],
     ['draw', 'Draw'], ['score', 'Score'],
   ];
   const CLOCKS = ['Full screen', 'Rainbow', 'Boxed', 'Square analog', 'Inverted', 'Round analog'];
@@ -42,9 +41,10 @@
   const SHOWING = {
     usage: 'AI usage', timer: 'the timer', clock: 'the clock', light: 'a solid color', off: 'off',
     vj: 'an effect', score: 'the score', pixels: 'your drawing', image: 'your image',
-    cloud: 'the Cloud channel', 'clock-weather': 'the clock',
+    cloud: 'the Cloud channel', custom: 'the Custom channel', visualizer: 'the visualizer', 'clock-weather': 'the clock',
+    weather: 'the weather',
   };
-  const NO_PREVIEW = ['clock', 'score', 'cloud', 'clock-weather'];
+  const NO_PREVIEW = ['clock', 'vj', 'score', 'image', 'cloud', 'custom', 'visualizer', 'clock-weather'];
   const CONDITION = {
     sunny: 'clear', night: 'clear', 'partly-cloudy': 'partly cloudy', cloudy: 'cloudy', rain: 'rain',
     storm: 'a thunderstorm', fog: 'fog', snow: 'snow',
@@ -65,6 +65,7 @@
   let toast = $state('');
   let busy = $state(false);
   let tab = $state('usage');
+  let timerKind = $state('pomodoro');   // which timer the Timer tab shows
 
   let brightness = $state(60);
   let clockStyle = $state(0);
@@ -74,12 +75,56 @@
   let lightColor = $state('#ffb800');
   let red = $state(0);
   let blue = $state(0);
+  let minutes = $state(25);
   let canvas = $state([...BLANK]);
   let brush = $state('#ffb800');
   let raw = $state('');
   let claudeToken = $state('');
   let codexToken = $state('');
   let codexAccount = $state('');
+  let city = $state('');
+  let lat = $state('');
+  let lon = $state('');
+  const weatherSettings = (body, done) => post('/api/weather/settings', body, done);
+  async function findCity() {
+    await weatherSettings({ city }, 'Location saved');
+    if (!status.error) city = '';
+  }
+  // The browser's own location (GPS or Wi-Fi), more precise than the automatic one. Asks permission first.
+  // Why the browser gave no location, by GeolocationPositionError code, with what to do about it.
+  const LOCATION_PROBLEMS = {
+    1: 'The browser was not allowed to share your location. Allow location for this page in the address bar, then try again.',
+    2: 'The browser could not find a location. On Windows, turn on Location services and "Let desktop apps access your location" in Settings, Privacy & security, Location. On macOS, allow your browser in System Settings, Privacy & Security, Location Services.',
+    3: 'Finding the location took too long. Try again, or type a city instead.',
+  };
+  let locationProblem = $state('');
+  function useDeviceLocation() {
+    locationProblem = '';
+    if (!navigator.geolocation) {
+      locationProblem = 'This browser cannot share its location. Type a city instead.';
+      return;
+    }
+    busy = true;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        busy = false;
+        weatherSettings({ latitude: pos.coords.latitude.toFixed(4), longitude: pos.coords.longitude.toFixed(4),
+          place: "This device's location" }, 'Location saved');
+      },
+      (err) => {
+        busy = false;
+        const sys = status.weather?.system_location;
+        locationProblem = err.code === 2 && sys?.checked && !sys.off.length
+          ? 'Windows location is on, but no location was found. Windows finds it from nearby Wi-Fi, so a computer on a cable only may have none. Type a city instead.'
+          : (LOCATION_PROBLEMS[err.code] ?? LOCATION_PROBLEMS[2]);
+      },
+      { timeout: 20000, maximumAge: 3600000 },
+    );
+  }
+  function ago(fetchedAt) {
+    const seconds = Math.max(0, Math.round(now / 1000 - fetchedAt));
+    return seconds < 60 ? 'just now' : `${left(seconds)} ago`;
+  }
   const SOURCES = {
     manual: 'Using what you entered', file: 'Found on this computer', keychain: 'Read from the macOS Keychain',
   };
@@ -87,6 +132,14 @@
     await post('/api/tokens', body, done);
     claudeToken = codexToken = codexAccount = '';
   }
+  // Open by itself only when no account is found, decided once, so a status refresh never closes it under you
+  let accountsOpen = $state(false);
+  let accountsDecided = false;
+  $effect(() => {
+    if (accountsDecided || !status.accounts || !('claude' in status.accounts)) return;   // wait for the server's answer
+    accountsDecided = true;
+    accountsOpen = !status.accounts.claude && !status.accounts.codex;
+  });
   let hooks = $state(null);       // whether Claude Code hooks are installed, from GET /api/hooks
   async function loadHooks() {
     try {
@@ -99,14 +152,6 @@
     await post('/api/hooks', { install }, install ? 'Claude Code connected' : 'Claude Code disconnected');
     await loadHooks();
   }
-  // Open by itself only when no account is found, decided once, so a status refresh never closes it under you
-  let accountsOpen = $state(false);
-  let accountsDecided = false;
-  $effect(() => {
-    if (accountsDecided || !status.accounts || !('claude' in status.accounts)) return;   // wait for the server's answer
-    accountsDecided = true;
-    accountsOpen = !status.accounts.claude && !status.accounts.codex;
-  });
   let linkOpen = $state(false);
   let ports = $state({ ports: [], setting: 'auto', help: '' });
   let choice = $state('auto');
@@ -155,12 +200,23 @@
   const previewFrame = (n) => n.frames[still ? 0 : frameAt(n.ms, true, now - pageStart)];
   const dismiss = () => post('/api/notify', { event: 'dismiss' }, 'Notification dismissed');
 
+  const PHASE = { focus: 'Focus', short: 'Short break', long: 'Long break' };
+  const clockText = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  let pomo = $derived(status.pomodoro);
+  let pomoRunning = $derived(pomo?.status === 'running');   // a boolean, so the poll restarts only when it flips
+  let pomoForm = $state(null);         // the settings form, filled from the server once
+  $effect(() => {
+    if (pomo?.settings && !pomoForm) pomoForm = { ...pomo.settings };
+  });
+  const pomodoro = (action, done) => post('/api/pomodoro', { action }, done);
+
   let headline = $derived(
     !online ? "Can't reach Sideglance"
       : status.notification ? status.notification_label
+      : pomo?.active ? `${PHASE[pomo.phase]}, ${clockText(pomo.seconds_left)}`
       : status.showing ? (status.showing === 'off' ? 'Screen is off' : `Showing ${SHOWING[status.showing] ?? status.showing}`)
       : 'Nothing sent to the screen yet');
-  let noPreview = $derived(online && !status.notification && NO_PREVIEW.includes(status.showing));
+  let noPreview = $derived(online && !status.notification && !pomo?.active && NO_PREVIEW.includes(status.showing));
 
   let toastTimer;
   function say(text) {
@@ -173,6 +229,10 @@
     busy = true;
     try {
       if (demo && path === '/api/image') return say('Uploads need a real device');
+      if (demo && path.startsWith('/api/pomodoro')) return say('The Pomodoro timer needs the Sideglance app');
+      if (demo && path === '/api/weather/settings' && !('unit' in JSON.parse(options.body)) && !('in_rotation' in JSON.parse(options.body))) {
+        return say('Looking up a place needs the Sideglance app');
+      }
       const data = await request(path, options);
       online = true;
       if (data.mode) setStatus(data);
@@ -237,8 +297,10 @@
   const level = (pct) => (pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low');
 
   $effect(() => {
+    // every second while a Pomodoro counts down, so the preview's seconds ring keeps moving
+    const every = pomoRunning ? 1000 : 2000;
     refresh();
-    const poll = setInterval(refresh, 2000);
+    const poll = setInterval(refresh, every);
     return () => clearInterval(poll);
   });
   $effect(() => {
@@ -256,11 +318,28 @@
   $effect(() => {
     if (status.mode === lastMode) return;
     lastMode = status.mode;
-    if (status.mode === 'usage') tab = 'usage';
+    if (['usage', 'timer', 'weather'].includes(status.mode)) tab = status.mode;
+    if (status.mode === 'timer') timerKind = 'countdown';
+  });
+  let lastPomodoro = false;
+  let pomoActive = $derived(!!pomo?.active);
+  $effect(() => {
+    if (pomoActive && !lastPomodoro) {
+      tab = 'timer';
+      timerKind = 'pomodoro';
+    }
+    lastPomodoro = pomoActive;
   });
 </script>
 
 <div class="page">
+  {#if IN_APP && online && status.app !== 'sideglance-app'}
+    <p class="banner">
+      Another program is using port 8765, probably the Python version of Sideglance, so this app cannot
+      start its own server. Stop it (in the Python folder, run <code>python autostart.py uninstall</code>),
+      then quit Sideglance from the tray or menu bar and open it again.
+    </p>
+  {/if}
   {#if demo}
     <p class="banner">
       This is a demo. Nothing is sent to a real device. Install the Sideglance app to control your own display.
@@ -387,6 +466,174 @@
           </div>
           </div>
         </details>
+        {/if}
+
+      {:else if tab === 'weather'}
+        {@const w = status.weather}
+        <h2>Weather</h2>
+        {#if w}
+          <div class="weather-now">
+            <div class="mini"><PixelGrid pixels={w.face} label="Preview of the weather face" /></div>
+            <div class="card-text">
+              {#if w.reading.fetched_at}
+                <p class="reading">{Math.round(w.reading.temperature)}°{w.unit.toUpperCase()} and {CONDITION[w.reading.condition]}</p>
+                <p class="help">{w.place}. Updated {ago(w.reading.fetched_at)}.</p>
+              {:else if w.latitude == null && !w.auto}
+                <p class="help">Set a location below. Until there is a reading, the face shows a cloud and --.</p>
+              {:else if w.latitude == null}
+                <p class="help">No reading yet. Your location is found when you show the weather.</p>
+              {:else}
+                <p class="help">No reading yet for {w.place}. It arrives when you show the weather.</p>
+              {/if}
+              {#if w.error && (status.mode === 'weather' || w.in_rotation)}<p class="help bad">{w.error}</p>{/if}
+            </div>
+          </div>
+          {#if status.mode === 'weather' && !status.notification}
+            <button disabled={busy} onclick={() => post('/api/weather', { on: false }, 'Weather stopped')}>Stop showing the weather</button>
+          {:else}
+            <button class="go" disabled={busy} onclick={() => post('/api/weather', { on: true }, 'Weather shown')}>Show the weather</button>
+          {/if}
+
+          <div class="group">
+            <h3>Location</h3>
+            <p class="help">
+              {#if w.auto}
+                {w.place ? `Found automatically: ${w.place}.` : 'Found automatically from your internet connection.'}
+                This is approximate. Set a city if it is wrong.
+              {:else}
+                Location in use: {w.place}.
+              {/if}
+            </p>
+            <div class="row">
+              {#if !w.auto}
+                <button disabled={busy} onclick={() => weatherSettings({ auto: true }, 'Location found automatically')}>Find it automatically</button>
+              {/if}
+              <button disabled={busy} onclick={useDeviceLocation}>Use this device's location</button>
+            </div>
+            {#if w.system_location?.checked && w.system_location.off.length}
+              <p class="help bad">
+                Windows is not sharing a location, so this device's location will not work. Turn on
+                {w.system_location.off.map((name) => `"${name}"`).join(' and ')} in
+                <a href="ms-settings:privacy-location">Settings, Privacy & security, Location</a>.
+              </p>
+            {:else if locationProblem}<p class="help bad">{locationProblem}</p>{/if}
+            <div class="row">
+              <input class="grow" placeholder="City, for example Chiang Mai" bind:value={city} aria-label="City"
+                onkeydown={(e) => e.key === 'Enter' && city.trim() && findCity()} />
+              <button disabled={busy || city.trim().length < 2} onclick={findCity}>Find city</button>
+            </div>
+            <details class="coords">
+              <summary>Use latitude and longitude instead</summary>
+              <div class="row">
+                <label class="inline">Latitude <input type="number" step="0.01" min="-90" max="90" bind:value={lat} /></label>
+                <label class="inline">Longitude <input type="number" step="0.01" min="-180" max="180" bind:value={lon} /></label>
+                <button disabled={busy || lat === '' || lon === ''}
+                  onclick={() => weatherSettings({ latitude: lat, longitude: lon }, 'Location saved')}>Save coordinates</button>
+              </div>
+            </details>
+          </div>
+          <div class="group">
+            <h3>Unit</h3>
+            <div class="chips">
+              {#each [['c', 'Celsius'], ['f', 'Fahrenheit']] as [unit, name]}
+                <button class:on={w.unit === unit} disabled={busy} onclick={() => weatherSettings({ unit }, `${name} saved`)}>{name}</button>
+              {/each}
+            </div>
+          </div>
+          <div class="group">
+            <h3>AI usage rotation</h3>
+            <p class="help">{w.in_rotation
+              ? 'The weather face plays after the usage faces while AI usage is showing.'
+              : 'Add the weather face after the usage faces, so one screen shows both.'}</p>
+            <button disabled={busy} onclick={() => weatherSettings({ in_rotation: !w.in_rotation },
+              w.in_rotation ? 'Removed from the rotation' : 'Added to the rotation')}>
+              {w.in_rotation ? 'Remove from the rotation' : 'Add to the rotation'}</button>
+          </div>
+          <p class="help">Weather from <a href="https://open-meteo.com/">Open-Meteo</a>, updated every 15 minutes.</p>
+        {:else}
+          <p class="help">The app is older than this page. Update Sideglance.</p>
+        {/if}
+
+      {:else if tab === 'timer'}
+        <h2>Timer</h2>
+        <div class="chips" role="group" aria-label="Kind of timer">
+          <button class:on={timerKind === 'pomodoro'} onclick={() => (timerKind = 'pomodoro')}>Pomodoro</button>
+          <button class:on={timerKind === 'countdown'} onclick={() => (timerKind = 'countdown')}>Countdown</button>
+        </div>
+        {#if timerKind === 'pomodoro'}
+          {#if pomo}
+            <div class="weather-now">
+              <div class="mini"><PixelGrid pixels={pomo.face} label="Preview of the Pomodoro face" /></div>
+              <div class="card-text">
+                <p class="reading">{PHASE[pomo.phase]}, {clockText(pomo.seconds_left)}</p>
+                <p class="help">
+                  {pomo.sessions_completed} of {pomo.sessions_per_set} focus sessions done.
+                  {pomo.status === 'paused' ? 'Paused.' : pomo.status === 'waiting' ? 'Ready to start.' : pomo.status === 'idle' ? 'Not started.' : ''}
+                </p>
+              </div>
+            </div>
+            <div class="row">
+              {#if pomo.status === 'running'}
+                <button disabled={busy} onclick={() => pomodoro('pause', 'Paused')}>Pause</button>
+              {:else if pomo.status === 'paused'}
+                <button class="go" disabled={busy} onclick={() => pomodoro('resume', 'Resumed')}>Resume</button>
+              {:else}
+                <button class="go" disabled={busy} onclick={() => pomodoro('start', `${PHASE[pomo.phase]} started`)}>Start {PHASE[pomo.phase].toLowerCase()}</button>
+              {/if}
+              <button disabled={busy} onclick={() => pomodoro('skip', 'Skipped to the next phase')}>Skip to next phase</button>
+              {#if pomo.active}
+                <button disabled={busy} onclick={() => pomodoro('reset', 'Pomodoro reset')}>Reset</button>
+              {:else}
+                <button disabled={busy} onclick={() => pomodoro('show', 'Pomodoro shown')}>Show on display</button>
+              {/if}
+            </div>
+            <p class="help">
+              {pomo.active
+                ? 'The Pomodoro face covers the other faces until you reset it. When a phase ends, the hourglass blinks until you start the next phase or dismiss it.'
+                : 'Focus for 25 minutes, take a short break, and after four focus sessions take a long one. The display shows the minutes left, a ring for the seconds, and a dot per session.'}
+            </p>
+
+            {#if pomoForm}
+              <div class="group">
+                <h3>Lengths</h3>
+                <div class="row">
+                  <label class="inline">Focus <input type="number" min="1" max="99" bind:value={pomoForm.focus} /> min</label>
+                  <label class="inline">Short break <input type="number" min="1" max="99" bind:value={pomoForm.short} /> min</label>
+                  <label class="inline">Long break <input type="number" min="1" max="99" bind:value={pomoForm.long} /> min</label>
+                  <label class="inline">Sessions per set <input type="number" min="1" max="4" bind:value={pomoForm.sessions} /></label>
+                </div>
+                <h3>Next phase</h3>
+                <div class="chips">
+                  <button class:on={!pomoForm.auto_start} onclick={() => (pomoForm.auto_start = false)}>Wait for me</button>
+                  <button class:on={pomoForm.auto_start} onclick={() => (pomoForm.auto_start = true)}>Start on its own</button>
+                </div>
+                <button disabled={busy} onclick={() => post('/api/pomodoro/settings', pomoForm, 'Pomodoro settings saved')}>Save settings</button>
+              </div>
+            {/if}
+          {:else}
+            <p class="help">The app is older than this page. Update Sideglance.</p>
+          {/if}
+
+        {:else}
+          {#if status.mode === 'timer'}
+            <p class="big">{Math.ceil((status.timer_left ?? 0) / 60)}<small> min left</small></p>
+            <div class="row">
+              {#if status.notification}
+                <button class="go" disabled={busy} onclick={() => post('/api/notify', { event: 'dismiss' }, 'Timer shown')}>Show timer</button>
+              {/if}
+              <button disabled={busy} onclick={() => post('/api/timer', { minutes: 0 }, 'Timer stopped')}>Stop timer</button>
+            </div>
+          {:else}
+            <p class="lead">The screen counts down the minutes. When time is up, an hourglass blinks until you dismiss it, then the screen goes back to what it showed before.</p>
+            <div class="chips">
+              {#each [15, 25, 50] as m}
+                <button class:on={minutes === m} onclick={() => (minutes = m)}>{m} min</button>
+              {/each}
+              <label class="inline">Custom <input type="number" min="1" max="99" bind:value={minutes} /></label>
+            </div>
+            <button class="go" disabled={busy} onclick={() => post('/api/timer', { minutes }, 'Timer started')}>Start {minutes}-minute timer</button>
+          {/if}
+
         {/if}
 
       {:else if tab === 'notify'}
@@ -678,6 +925,11 @@
   button.go.small { padding: 7px 14px; font-size: 15px; }
   .choice { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
   .choice input { accent-color: var(--blue); width: 18px; height: 18px; margin: 3px 0 0; padding: 0; flex: none; }
+  .weather-now { display: flex; gap: 16px; align-items: center; }
+  .reading { margin: 0; font: 600 22px/1.2 'Chakra Petch', sans-serif; }
+  .coords summary { font-size: 15px; }
+  .coords .row { margin-top: 10px; }
+  .coords input[type='number'] { width: 96px; }
   .provider { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
   .provider h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 20px; }
   .provider h3 i { width: 14px; height: 14px; border-radius: 50%; }

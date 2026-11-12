@@ -35,6 +35,7 @@ fn glyph(ch: char) -> &'static [&'static str] {
         'h' => &["#  ", "#  ", "###", "# #", "# #"],
         'd' => &["  #", "  #", "###", "# #", "###"],
         '<' => &["  #", " # ", "#  ", " # ", "  #"],
+        '°' => &["###", "# #", "###", "   ", "   "],
         _ => &["   ", "   ", "###", "   ", "   "], // '-'
     }
 }
@@ -107,4 +108,189 @@ pub fn usage_face(face: u8, a: &Account) -> Frame {
 /// Two faces per account: percent used, then time left.
 pub fn usage_faces(accounts: &[Account]) -> Vec<Frame> {
     accounts.iter().flat_map(|a| [usage_face(1, a), usage_face(2, a)]).collect()
+}
+
+// ---------- countdown timer ----------
+
+/// Minutes left in large digits, and a bar for the time left.
+pub fn timer_frame(remaining: i64, total: i64) -> Frame {
+    let mut f = Frame::default();
+    let minutes = ((remaining + 59).div_euclid(60)).min(99);
+    let text = minutes.to_string();
+    let n = text.len() as i32;
+    let mut x = (16 - (n * 6 + (n - 1))).div_euclid(2);
+    for ch in text.chars() {
+        let rows: Vec<String> = if ch == '1' {
+            vec![" # ".into(), "## ".into(), " # ".into(), " # ".into(), "###".into()]
+        } else {
+            glyph(ch).iter().map(|r| format!("{r:<3}")).collect()
+        };
+        for (gy, row) in rows.iter().enumerate() {
+            for (gx, c) in row.chars().enumerate() {
+                if c == '#' {
+                    for dx in 0..2 {
+                        for dy in 0..2 {
+                            let px = x + 2 * gx as i32 + dx;
+                            if (0..16).contains(&px) {
+                                f.set(px as usize, 1 + 2 * gy + dy as usize, WHITE);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        x += 7;
+    }
+    let filled = if remaining > 0 {
+        ((16.0 * remaining as f64 / total as f64).round_ties_even() as usize).max(1)
+    } else {
+        0
+    };
+    for bx in 0..16 {
+        for by in [13, 14] {
+            f.set(bx, by, if bx < filled { BLUE } else { EMPTY });
+        }
+    }
+    f
+}
+
+// ---------- weather ----------
+// Rows 0-8 icon, row 9 empty, rows 10-14 temperature, row 15 empty.
+
+const WEATHER_TEXT_TOP: usize = 10;
+const WEATHER_TEXT: Rgb = [0xF2, 0xEF, 0xE6]; // the icons' white
+
+/// "32°", "-5°", or "--°" when there is no reading. Rounded half away from zero, clamped to -99..99.
+pub fn temperature_text(temperature: Option<f64>) -> String {
+    match temperature {
+        None => "--°".into(),
+        Some(t) => format!("{}°", (t.round() as i64).clamp(-99, 99)),
+    }
+}
+
+/// (first column, width) for text in 3-wide glyphs with 1-pixel gaps, centred on 16 columns.
+pub fn temperature_layout(text: &str) -> (i32, i32) {
+    let width = text.chars().count() as i32 * 4 - 1;
+    ((16 - width + 1).div_euclid(2), width)
+}
+
+/// Condition icon on top, temperature below.
+pub fn weather_face(condition: &str, temperature: Option<f64>) -> Frame {
+    let mut f = Frame::default();
+    for (y, row) in crate::weather::icon_grid(condition).iter().enumerate() {
+        for (x, color) in row.iter().enumerate() {
+            if let Some(c) = color {
+                f.set(x, y, *c);
+            }
+        }
+    }
+    let text = temperature_text(temperature);
+    let (mut x, _) = temperature_layout(&text);
+    for ch in text.chars() {
+        for (dy, row) in glyph(ch).iter().enumerate() {
+            for (dx, c) in format!("{row:<3}").chars().enumerate() {   // every glyph is 3 wide here, "1" too
+                let px = x + dx as i32;
+                if c == '#' && (0..16).contains(&px) {
+                    f.set(px as usize, WEATHER_TEXT_TOP + dy, WEATHER_TEXT);
+                }
+            }
+        }
+        x += 4;
+    }
+    f
+}
+
+// ---------- Pomodoro ----------
+
+pub fn pomodoro_color(letter: char) -> Option<Rgb> {
+    Some(match letter {
+        't' => [0x34, 0x34, 0x2F], // dim track
+        'R' => [0xFF, 0x4B, 0x3A], // focus ring, completed dots
+        'G' => [0x3D, 0xDC, 0x84], // short-break ring
+        'B' => [0x4C, 0x9B, 0xFF], // long-break ring
+        'W' => [0xF2, 0xEF, 0xE6], // digits, current dot
+        'A' => [0xFF, 0xB2, 0x24], // digits in the last minute
+        'S' => [0x8F, 0x8D, 0x85], // paused
+        _ => return None,
+    })
+}
+
+const DIGITS_5X7: [[&str; 7]; 10] = [
+    [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+    ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
+    [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
+    ["####.", "....#", "....#", ".###.", "....#", "....#", "####."],
+    ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
+    ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
+    ["..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."],
+    ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
+    [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
+    [".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."],
+];
+const DIGIT_COLUMNS: [usize; 2] = [2, 9];
+const DIGIT_TOP: usize = 3;
+const DOT_COLUMNS: [usize; 4] = [2, 5, 9, 12];
+const DOT_TOP: usize = 11;
+
+/// The 60 border pixels, clockwise from the top centre.
+pub fn ring() -> Vec<(usize, usize)> {
+    let mut r: Vec<(usize, usize)> = (8..16).map(|x| (x, 0)).collect();
+    r.extend((1..16).map(|y| (15, y)));
+    r.extend((0..15).rev().map(|x| (x, 15)));
+    r.extend((0..15).rev().map(|y| (0, y)));
+    r.extend((1..8).map(|x| (x, 0)));
+    r
+}
+
+/// The face as 16 strings of palette letters ("." = off).
+pub fn pomodoro_grid(phase: &str, seconds_left: i64, sessions_completed: usize, paused: bool) -> Vec<String> {
+    let mut g = vec![vec!['.'; 16]; 16];
+    let left = seconds_left.max(0);
+    let lit = if paused { 'S' } else {
+        match phase { "short" => 'G', "long" => 'B', _ => 'R' }
+    };
+    let s = (left % 60) as usize; // seconds left in the current minute
+    for (i, (x, y)) in ring().into_iter().enumerate() {
+        g[y][x] = if s > 0 && i >= 60 - s { lit } else { 't' };
+    }
+    let last_minute = left < 60;
+    let number = if last_minute { left } else { (left / 60).min(99) };
+    let digit_color = if paused { 'S' } else if last_minute { 'A' } else { 'W' };
+    let text = format!("{number:02}");
+    for (ch, x0) in text.chars().zip(DIGIT_COLUMNS) {
+        for (dy, row) in DIGITS_5X7[ch.to_digit(10).unwrap() as usize].iter().enumerate() {
+            for (dx, c) in row.chars().enumerate() {
+                if c == '#' {
+                    g[DIGIT_TOP + dy][x0 + dx] = digit_color;
+                }
+            }
+        }
+    }
+    for (i, x0) in DOT_COLUMNS.into_iter().enumerate() {
+        let color = if i < sessions_completed {
+            if paused { 'S' } else { 'R' }
+        } else if i == sessions_completed && phase == "focus" && !paused {
+            'W'
+        } else {
+            't'
+        };
+        for dx in 0..2 {
+            for dy in 0..2 {
+                g[DOT_TOP + dy][x0 + dx] = color;
+            }
+        }
+    }
+    g.into_iter().map(|r| r.into_iter().collect()).collect()
+}
+
+pub fn pomodoro_face(phase: &str, seconds_left: i64, sessions_completed: usize, paused: bool) -> Frame {
+    let mut f = Frame::default();
+    for (y, row) in pomodoro_grid(phase, seconds_left, sessions_completed, paused).iter().enumerate() {
+        for (x, c) in row.chars().enumerate() {
+            if let Some(color) = pomodoro_color(c) {
+                f.set(x, y, color);
+            }
+        }
+    }
+    f
 }

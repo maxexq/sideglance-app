@@ -44,6 +44,16 @@ fn open_controls(handle: &AppHandle) {
         .title("Sideglance")
         .inner_size(1180.0, 860.0)
         .min_inner_size(380.0, 600.0)
+        // links to other sites (Open-Meteo, Windows Settings) open outside the app, so the
+        // window always keeps the controls
+        .on_navigation(|url| {
+            let ours = matches!(url.scheme(), "tauri" | "asset")
+                || matches!(url.host_str(), Some("tauri.localhost" | "localhost" | "127.0.0.1"));
+            if !ours {
+                let _ = open::that_detached(url.as_str());
+            }
+            ours
+        })
         .build();
     if let Ok(window) = built {
         let hide = window.clone();

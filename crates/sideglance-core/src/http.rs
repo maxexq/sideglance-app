@@ -175,6 +175,21 @@ pub fn post(app: &Arc<App>, path: &str, body: &Value) -> Result<bool, String> {
         let on = body["on"].as_bool().unwrap_or(false);
         app.set_usage(on);
         app.config.update(&[("start_with", if on { json!("usage") } else { Value::Null })]).map_err(|e| e.to_string())?;
+    } else if path == "/api/weather" {
+        app.dismiss();
+        let on = body["on"].as_bool().unwrap_or(false);
+        app.set_weather(on);
+        app.config.update(&[("start_with", if on { json!("weather") } else { Value::Null })]).map_err(|e| e.to_string())?;
+    } else if path == "/api/weather/settings" {
+        app.weather_settings(body)?;
+    } else if path == "/api/timer" {
+        app.dismiss();
+        let minutes = body["minutes"].as_i64().or_else(|| body["minutes"].as_str().and_then(|m| m.parse().ok())).unwrap_or(0);
+        app.set_timer(minutes);
+    } else if path == "/api/pomodoro" {
+        app.pomodoro_action(body["action"].as_str().unwrap_or(""))?;
+    } else if path == "/api/pomodoro/settings" {
+        app.pomodoro_settings(body)?;
     } else if path == "/api/tokens" {
         app.set_tokens(body)?;
     } else if path == "/api/port" {

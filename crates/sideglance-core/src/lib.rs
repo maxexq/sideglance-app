@@ -15,6 +15,8 @@ pub mod playback;
 pub mod render;
 pub mod config;
 pub mod usage;
+pub mod weather;
+pub mod pomodoro;
 pub mod device;
 pub mod link;
 pub mod hooks;

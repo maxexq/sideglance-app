@@ -146,3 +146,88 @@ fn origins() {
     assert_eq!(origin_kind(Some("https://sideglance.pages.dev/"), &allowed), OriginKind::Hosted);
     assert_eq!(origin_kind(Some("https://evil.example"), &allowed), OriginKind::Blocked);
 }
+
+// ----- weather, countdown and Pomodoro layers -----
+
+use sideglance_core::weather::{Failure, Tracker};
+
+fn setup_with_clock() -> (Arc<App>, Log, Arc<Mutex<f64>>) {
+    let log = Log::default();
+    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("sg-layers-{n}-{:?}", std::thread::current().id()));
+    let config = Arc::new(Config::at(dir.join("config.json")));
+    config.update(&[("weather_latitude", json!(18.79)), ("weather_longitude", json!(98.98)),
+                    ("weather_place", json!("Chiang Mai")), ("weather_auto", json!(false))]).unwrap();
+    let get: Box<sideglance_core::weather::GetJson> = Box::new(|url: &str, _: &[(&str, String)]| {
+        if url.contains("forecast") {
+            Ok(json!({"current": {"temperature_2m": 29.6, "weather_code": 3, "is_day": 1}}))
+        } else {
+            Err(Failure::Status(404))
+        }
+    });
+    let now = Arc::new(Mutex::new(100.0));
+    let c = Arc::clone(&now);
+    let tracker = Tracker::new(get, Box::new(|| 1_000.0));
+    let app = App::with_parts(Box::new(Recorder(log.clone())), config, Box::new(|_| Ok((vec![account()], vec![]))),
+                              tracker, Box::new(move || *c.lock().unwrap()));
+    (app, log, now)
+}
+
+#[test]
+fn weather_mode_draws_the_reading() {
+    let (app, log, _now) = setup_with_clock();
+    http::post(&app, "/api/weather", &json!({"on": true})).unwrap();
+    wait_for(|| app.status()["weather"]["reading"]["temperature"] == json!(29.6));
+    wait_for(|| last(&log) == "show 1 [4000]");
+    let status = app.status();
+    assert_eq!(status["mode"], "weather");
+    assert_eq!(status["weather"]["reading"]["condition"], "cloudy");
+    assert_eq!(status["weather"]["place"], "Chiang Mai");
+    assert_eq!(app.scene()["weather"]["temperature"], json!(29.6));
+    app.set_weather(false);
+}
+
+#[test]
+fn weather_joins_the_usage_rotation_when_asked() {
+    let (app, log, _now) = setup_with_clock();
+    http::post(&app, "/api/weather/settings", &json!({"in_rotation": true})).unwrap();
+    app.set_usage(true);
+    wait_for(|| last(&log).starts_with("show 3"));      // two usage faces and the weather face
+    app.set_usage(false);
+}
+
+#[test]
+fn pomodoro_covers_the_base_until_reset() {
+    let (app, log, now) = setup_with_clock();
+    app.manual(sideglance_core::state::Base::Command { name: "clock".into(), args: vec![] }, None, "clock").unwrap();
+    http::post(&app, "/api/pomodoro", &json!({"action": "start"})).unwrap();
+    assert_eq!(app.status()["pomodoro"]["status"], "running");
+    let shown = log.0.lock().unwrap().len();
+    app.manual(sideglance_core::state::Base::Command { name: "light".into(), args: vec!["ff0000".into()] }, None, "light").unwrap();
+    assert_eq!(log.0.lock().unwrap().len(), shown);       // hidden under the Pomodoro
+    *now.lock().unwrap() += 25.0 * 60.0;
+    app.pomodoro_step();
+    assert_eq!(app.status()["notification"], "timer-finished");
+    assert_eq!(app.status()["pomodoro"]["phase"], "short");
+    http::post(&app, "/api/pomodoro", &json!({"action": "reset"})).unwrap();
+    assert_eq!(last(&log), "light ff0000");               // the base comes back
+    assert!(http::post(&app, "/api/pomodoro", &json!({"action": "nope"})).is_err());
+}
+
+#[test]
+fn countdown_timer_shows_minutes_and_stops() {
+    let (app, log, _now) = setup_with_clock();
+    http::post(&app, "/api/timer", &json!({"minutes": 25})).unwrap();
+    wait_for(|| last(&log) == "show 1 [4000]");
+    let status = app.status();
+    assert_eq!((status["mode"].as_str(), status["showing"].as_str()), (Some("timer"), Some("timer")));
+    assert!(status["timer_left"].as_i64().unwrap() > 24 * 60);
+    http::post(&app, "/api/timer", &json!({"minutes": 0})).unwrap();
+    assert_eq!(app.status()["mode"], "manual");
+}
+
+#[test]
+fn status_says_it_is_the_app() {
+    let (app, _log, _now) = setup_with_clock();
+    assert_eq!(app.status()["app"], "sideglance-app");
+}
