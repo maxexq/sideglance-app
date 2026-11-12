@@ -72,3 +72,12 @@ fn off_then_a_picture_turns_the_screen_back_on() {
     let zero = protocol::command("brightness", &["0".into()], (2026, 1, 1, 0, 0, 0)).unwrap();
     assert_eq!(off, zero);
 }
+
+#[test]
+fn speaker_ports_are_not_the_display() {
+    use sideglance_core::link::is_audio_port;
+    assert!(is_audio_port("/dev/cu.DitooPro-Audio"));
+    assert!(is_audio_port("/dev/cu.Divoom-Ditoo-Audio-1"));
+    assert!(!is_audio_port("/dev/cu.DitooPro-Light"));
+    assert!(!is_audio_port("/dev/cu.AirPods-Audio")); // not a Divoom at all
+}

@@ -124,8 +124,12 @@ pub fn list_ports() -> Vec<Candidate> {
                 if !port.starts_with("/dev/cu.") || lower.contains("bluetooth-incoming") || lower.contains("debug-console") {
                     continue;
                 }
-                let likely = DEVICE_NAMES.iter().any(|n| lower.contains(n));
-                found.push(Candidate { label: port.clone(), id: port, likely });
+                let named = DEVICE_NAMES.iter().any(|n| lower.contains(n));
+                // Divoom devices show up twice: "...-Audio" is the speaker and does not take pictures,
+                // "...-Light" (or a name without Audio) takes the commands.
+                let audio = is_audio_port(&port);
+                let label = if audio { format!("{port} (speaker only, not the display)") } else { port.clone() };
+                found.push(Candidate { label, id: port, likely: named && !audio });
             } else if lower.contains("rfcomm") || DEVICE_NAMES.iter().any(|n| lower.contains(n)) {
                 found.push(Candidate { label: port.clone(), id: port, likely: true });
             }
@@ -136,11 +140,18 @@ pub fn list_ports() -> Vec<Candidate> {
     found
 }
 
+/// The speaker half of a Divoom device, which plays sound but ignores display commands.
+pub fn is_audio_port(port: &str) -> bool {
+    let lower = port.to_lowercase();
+    DEVICE_NAMES.iter().any(|n| lower.contains(n)) && lower.contains("audio")
+}
+
 pub fn how_to_pair() -> &'static str {
     if cfg!(windows) {
         "Turn the Ditoo Pro on and pair it in Settings > Bluetooth & devices."
     } else if cfg!(target_os = "macos") {
-        "Turn the Ditoo Pro on and pair it in System Settings > Bluetooth."
+        "Turn the Ditoo Pro on and pair it in System Settings > Bluetooth. It may be listed twice: \
+         pair the one ending in Light, not the one ending in Audio."
     } else {
         "Turn the Ditoo Pro on and pair it in your Bluetooth settings."
     }
@@ -149,8 +160,13 @@ pub fn how_to_pair() -> &'static str {
 /// Try each likely port. The one that answers the probe wins. With no answer anywhere, a single
 /// port that opened is used; two or more are too ambiguous to guess.
 pub fn autodetect() -> Result<(String, Box<dyn Link>), String> {
-    let candidates: Vec<Candidate> = list_ports().into_iter().filter(|c| c.likely).collect();
+    let all = list_ports();
+    let candidates: Vec<Candidate> = all.iter().filter(|c| c.likely).cloned().collect();
     if candidates.is_empty() {
+        if all.iter().any(|c| is_audio_port(&c.id)) {
+            return Err("Only the Ditoo's speaker is paired, and it does not take pictures. In Bluetooth \
+                        settings, also pair the Ditoo entry that ends in Light.".into());
+        }
         return Err(format!("No Ditoo Pro found. {}", how_to_pair()));
     }
     let mut opened: Vec<(String, Box<dyn Link>)> = Vec::new();
