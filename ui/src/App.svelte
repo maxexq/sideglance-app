@@ -99,6 +99,14 @@
     await post('/api/hooks', { install }, install ? 'Claude Code connected' : 'Claude Code disconnected');
     await loadHooks();
   }
+  // Open by itself only when no account is found, decided once, so a status refresh never closes it under you
+  let accountsOpen = $state(false);
+  let accountsDecided = false;
+  $effect(() => {
+    if (accountsDecided || !status.accounts || !('claude' in status.accounts)) return;   // wait for the server's answer
+    accountsDecided = true;
+    accountsOpen = !status.accounts.claude && !status.accounts.codex;
+  });
   let linkOpen = $state(false);
   let ports = $state({ ports: [], setting: 'auto', help: '' });
   let choice = $state('auto');
@@ -348,7 +356,7 @@
         {/if}
 
         {#if !HOSTED}
-        <details class="accounts" open={!status.accounts?.claude && !status.accounts?.codex}>
+        <details class="accounts" bind:open={accountsOpen}>
           <summary>Accounts and tokens</summary>
           <div class="stack">
           <p class="lead">Tokens are found automatically when Claude Code or the Codex CLI is signed in on this computer. If one is not found, enter a token, or the path to its credentials file. A path keeps working after the token refreshes. A pasted token stops working when it expires.</p>
