@@ -1,6 +1,7 @@
 # Builds the Windows and macOS installers and attaches them to a draft GitHub release.
 # Start it by pushing a tag:  git tag v0.1.0 && git push origin v0.1.0
-# The release stays a draft until you publish it on GitHub.
+# The release stays a draft until you publish it on GitHub. Installed apps see a new version
+# only after it is published, through latest.json on the newest release.
 name: Release
 
 on:
@@ -50,6 +51,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # signs the update files; the app only installs updates signed with this key
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
@@ -57,5 +61,7 @@ jobs:
           releaseBody: |
             Unsigned build. See "Install" in the README for the one-time warning on Windows and macOS.
           releaseDraft: true
+          # latest.json points Windows at the .exe installer, the one most people install
+          updaterJsonPreferNsis: true
           prerelease: false
           args: ${{ matrix.args }}

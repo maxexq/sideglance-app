@@ -18,6 +18,7 @@ use crate::pomodoro::{self, Pomodoro};
 use crate::render;
 use crate::usage::{self, Account};
 use crate::system::{self, BatteryWatch, Meter, Sample};
+use crate::update::Updates;
 use crate::weather::{self, Reading, Tracker};
 
 /// The Pomodoro face is redrawn at most once a second, and only when a pixel changed.
@@ -88,6 +89,8 @@ pub struct App {
     pomodoro_loop: AtomicU64,
     fetch: Fetch,
     meter: Meter,
+    /// Newer versions of the app; the desktop app plugs in the updater.
+    pub updates: Updates,
 }
 
 fn unix_now() -> i64 {
@@ -142,6 +145,7 @@ impl App {
             pomodoro_loop: AtomicU64::new(0),
             fetch,
             meter: Meter::default(),
+            updates: Updates::default(),
         })
     }
 
@@ -754,6 +758,7 @@ impl App {
                 "face": inner.system.map(|s| render::system_face(s.cpu, s.ram).hex()),
             },
             "pomodoro": pomodoro,
+            "update": self.updates.status(),
             "notification": null,
         });
         if let Some(n) = &inner.notification {
@@ -823,6 +828,28 @@ impl App {
 
     pub fn mode(&self) -> &'static str {
         self.lock().mode
+    }
+
+    /// Install the newer version in the background. The device is let go first so the new
+    /// version can open the port; if installing fails, it is connected again.
+    pub fn install_update(self: &Arc<Self>) {
+        let app = Arc::clone(self);
+        std::thread::spawn(move || {
+            if app.updates.available_version().is_none() {
+                let _ = app.updates.check();
+            }
+            app.close_device();
+            if app.updates.install().is_err() {
+                app.reconnect_after_update();
+            }
+        });
+    }
+
+    fn reconnect_after_update(&self) {
+        let mut inner = self.lock();
+        if inner.device.connect().is_ok() {
+            self.restore_base(&mut inner);
+        }
     }
 
     pub fn close_device(&self) {

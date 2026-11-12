@@ -18,6 +18,17 @@ The builds are not signed yet, so each system warns you the first time:
 - **Windows:** SmartScreen says "Windows protected your PC". Click **More info**, then **Run anyway**.
 - **macOS:** after you drag Sideglance to Applications, the first open is blocked. Open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to Sideglance.
 
+### Updates
+
+Version 0.4.0 and later check for a newer version when they start and every 6 hours. When there
+is one, the control page shows **Update and restart**, and the tray or menu bar item changes to
+**Update to x.y.z and restart**. The app downloads the new version, checks its signature, installs
+it, and opens again. To check now, click **Check for updates** under the display on the control
+page, or in the tray menu.
+
+If installing fails, the page links to the release on GitHub, and you can install it over the
+current version.
+
 ## Set up
 
 1. Pair the Ditoo Pro in your Bluetooth settings: **Settings > Bluetooth & devices** on Windows, **System Settings > Bluetooth** on macOS.
@@ -113,9 +124,15 @@ The core's tests compare its output with the Python version byte for byte (proto
 
 ## Releases
 
-Push a tag to build both installers on GitHub Actions and attach them to a draft release:
+1. Raise `version` in `Cargo.toml` and `src-tauri/tauri.conf.json`.
+2. In GitHub, open **Actions > Release > Run workflow**, or push a tag (`git tag v0.4.0 && git push origin v0.4.0`).
+   The workflow builds both installers, signs the update files, and attaches them with
+   `latest.json` to a draft release.
+3. Publish the draft. Installed apps find the new version through `latest.json` on the newest
+   published release, so a draft reaches nobody.
 
-    git tag v0.1.0
-    git push origin v0.1.0
-
-Then publish the draft on GitHub.
+The update files are signed with a key that is separate from Apple or Microsoft code signing. The
+release workflow reads it from two repository secrets: `TAURI_SIGNING_PRIVATE_KEY` (the contents of
+the `.key` file) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public half is `plugins.updater.pubkey`
+in `src-tauri/tauri.conf.json`. Keep a backup of the key and password: without them, installed apps
+cannot be updated and people have to reinstall by hand.

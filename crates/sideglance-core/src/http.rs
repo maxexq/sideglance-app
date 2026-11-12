@@ -131,7 +131,7 @@ fn handle(app: Arc<App>, assets: Assets, mut req: Request) {
         return;
     }
 
-    if kind == OriginKind::Hosted && ["/api/tokens", "/api/port", "/api/hooks"].contains(&path.as_str()) {
+    if kind == OriginKind::Hosted && ["/api/tokens", "/api/port", "/api/hooks", "/api/update"].contains(&path.as_str()) {
         let _ = req.respond(json_response(403, &json!({"error": "Open http://localhost:8765 to change tokens or the connection."}), cors));
         return;
     }
@@ -211,6 +211,12 @@ pub fn post(app: &Arc<App>, path: &str, body: &Value) -> Result<bool, String> {
     } else if path == "/api/hooks" {
         // connect or disconnect Claude Code
         if body["install"].as_bool().unwrap_or(true) { crate::hooks::install()? } else { crate::hooks::uninstall()? }
+    } else if path == "/api/update" {
+        match body["action"].as_str().unwrap_or("check") {
+            "check" => { app.updates.check()?; }
+            "install" => app.install_update(),
+            other => return Err(format!("Unknown update action: {other}")),
+        }
     } else if path == "/api/playback" {
         app.set_playback(body["mode"].as_str().unwrap_or(""))?;
     } else if path == "/api/command" {

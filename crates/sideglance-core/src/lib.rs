@@ -21,5 +21,6 @@ pub mod system;
 pub mod device;
 pub mod link;
 pub mod hooks;
+pub mod update;
 pub mod http;
 pub mod state;

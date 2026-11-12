@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Sideglance",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "app.sideglance.desktop",
   "build": {
     "frontendDist": "../ui/dist",
@@ -59,6 +59,18 @@
       "wix": {
         "bannerPath": "installer/msi-banner.bmp",
         "dialogImagePath": "installer/msi-dialog.bmp"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0MDVFQ0VGNzJCOTE4OEYKUldTUEdMbHk3K3dGcE02UDRIWDlEYy81ZTN4WVdyZWJXWlJsYzM3eUM0eXhCQWV6MEcrVktybDgK",
+      "endpoints": [
+        "https://github.com/maxexq/sideglance-app/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

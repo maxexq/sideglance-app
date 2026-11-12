@@ -249,6 +249,15 @@
   const command = (done, cmd, ...args) => post('/api/command', { cmd, args }, done);
   const hex = (color) => color.replace('#', '');
 
+  // Updates: the app checks by itself every few hours; these are for the page's own buttons.
+  let update = $derived(status.update);
+  let checkedNow = $state(false);
+  async function checkUpdate() {
+    await post('/api/update', { action: 'check' });
+    checkedNow = true;
+  }
+  const installUpdate = () => post('/api/update', { action: 'install' });
+
   async function refresh() {
     if (demo) {
       setStatus(demoCall('/api/status', {}));
@@ -341,6 +350,20 @@
       then quit Sideglance from the tray or menu bar and open it again.
     </p>
   {/if}
+  {#if update?.available}
+    <div class="banner update" role="status">
+      {#if update.busy === 'installing'}
+        <p>Installing Sideglance {update.available.version}. The app restarts by itself when it is done.</p>
+      {:else}
+        <p>Sideglance {update.available.version} is ready. You have {status.version}.
+          <a href={update.available.url} target="_blank" rel="noreferrer">What changed</a></p>
+        <button class="go" disabled={busy || !!update.busy} onclick={installUpdate}>Update and restart</button>
+      {/if}
+      {#if update.error && update.busy !== 'installing'}
+        <p class="bad">{update.error}. You can <a href={update.available.url} target="_blank" rel="noreferrer">download it from GitHub</a> and install it over this one.</p>
+      {/if}
+    </div>
+  {/if}
   {#if demo}
     <p class="banner">
       This is a demo. Nothing is sent to a real device. Install the Sideglance app to control your own display.
@@ -394,6 +417,19 @@
       {/if}
     {/if}
     <button class="quiet" disabled={busy || !online} onclick={() => command('Screen turned off', 'off')}>Turn screen off</button>
+    {#if update?.supported}
+      <div class="version">
+        <p class="help">Sideglance {status.version}</p>
+        <button class="quiet" disabled={busy || !!update.busy} onclick={checkUpdate}>
+          {update.busy === 'checking' ? 'Checking…' : 'Check for updates'}
+        </button>
+        {#if checkedNow && !update.busy}
+          <p class="help" class:bad={!!update.error && !update.available}>
+            {update.available ? `Version ${update.available.version} is ready.` : update.error ? update.error + '.' : 'This is the newest version.'}
+          </p>
+        {/if}
+      </div>
+    {/if}
   </aside>
 
   <main>
@@ -881,6 +917,12 @@
     grid-column: 1 / -1; margin: 0; padding: 12px 16px; border-radius: 12px;
     background: #fff4d1; border: 1px solid #e6c766; color: #4a3a05; text-wrap: pretty;
   }
+  .banner.update { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; background: #e4efff; border-color: #9dbcf2; color: #10294f; }
+  .banner.update p { margin: 0; flex: 1 1 280px; }
+  .banner.update .bad { flex-basis: 100%; color: var(--high); }
+  .banner.update a { color: inherit; }
+  .version { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); width: 100%; }
+  .version .help { font-size: 14px; }
   .banner code { background: #f3e2a4; white-space: normal; overflow-wrap: anywhere; }
   .help a { color: var(--blue); }
   h1 { font: 600 26px/1.25 'Chakra Petch', sans-serif; margin: 12px 0 0; }

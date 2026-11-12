@@ -6,16 +6,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rust_embed::RustEmbed;
 use sideglance_core::config::Config;
 use sideglance_core::device::{Device, Divoom, Fake};
 use sideglance_core::http;
 use sideglance_core::state::{self, App};
+use sideglance_core::update::{self, Available, Updater};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_updater::UpdaterExt;
 
 /// The built control page (ui/dist), inside the app.
 #[derive(RustEmbed)]
@@ -28,6 +31,57 @@ fn assets() -> http::Assets {
     Arc::new(|path: &str| {
         Ui::get(path).map(|file| (file.data.into_owned(), file.metadata.mimetype().to_string()))
     })
+}
+
+/// Checks GitHub Releases (latest.json) and installs signed updates.
+struct AppUpdater(AppHandle);
+
+impl Updater for AppUpdater {
+    fn check(&self) -> Result<Option<Available>, String> {
+        let updater = self.0.updater().map_err(|e| e.to_string())?;
+        let found = tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())?;
+        Ok(found.map(|u| Available { version: u.version.clone(), notes: u.body.clone().unwrap_or_default() }))
+    }
+
+    fn install(&self) -> Result<(), String> {
+        let updater = self.0.updater().map_err(|e| e.to_string())?;
+        let found = tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())?;
+        let Some(update) = found else {
+            return Err("This is already the newest version.".into());
+        };
+        tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}))
+            .map_err(|e| e.to_string())?;
+        // On Windows the installer has already closed the app; on macOS the new app is in place.
+        self.0.restart()
+    }
+}
+
+/// Checks when the app starts and every few hours, and keeps the tray item's text in step
+/// with what the page or the tray found.
+fn watch_updates(core: Arc<App>, item: MenuItem<tauri::Wry>) {
+    std::thread::spawn(move || {
+        let mut last_check: Option<Instant> = None;
+        let mut shown = String::new();
+        loop {
+            if last_check.is_none_or(|t| t.elapsed() >= update::CHECK_EVERY) {
+                last_check = Some(Instant::now());
+                let _ = core.updates.check();
+            }
+            let text = update_text(&core);
+            if text != shown {
+                let _ = item.set_text(&text);
+                shown = text;
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+}
+
+fn update_text(core: &App) -> String {
+    match core.updates.available_version() {
+        Some(v) => format!("Update to {v} and restart"),
+        None => "Check for updates".into(),
+    }
 }
 
 /// Show the control page, creating its window the first time.
@@ -105,6 +159,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|handle, _args, _cwd| open_controls(handle)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN])))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory); // tray only, no Dock icon
@@ -115,11 +170,14 @@ fn main() {
             let usage = MenuItem::with_id(handle, "usage", "Show AI usage", true, None::<&str>)?;
             let dismiss = MenuItem::with_id(handle, "dismiss", "Dismiss notification", true, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(handle, "autostart", "Start at sign-in", true, starts_at_sign_in, None::<&str>)?;
+            let updates = MenuItem::with_id(handle, "update", "Check for updates", true, None::<&str>)?;
             let quit = MenuItem::with_id(handle, "quit", "Quit Sideglance", true, None::<&str>)?;
             let menu = Menu::with_items(handle, &[
                 &open, &PredefinedMenuItem::separator(handle)?, &usage, &dismiss,
-                &PredefinedMenuItem::separator(handle)?, &autostart, &quit,
+                &PredefinedMenuItem::separator(handle)?, &autostart, &updates, &quit,
             ])?;
+            tray_core.updates.set_updater(Arc::new(AppUpdater(handle.clone())));
+            watch_updates(Arc::clone(&tray_core), updates.clone());
             let core = Arc::clone(&tray_core);
             let check = autostart.clone();
             TrayIconBuilder::with_id("main")
@@ -142,6 +200,16 @@ fn main() {
                         let on = launcher.is_enabled().unwrap_or(false);
                         let _ = if on { launcher.disable() } else { launcher.enable() };
                         let _ = check.set_checked(launcher.is_enabled().unwrap_or(!on));
+                    }
+                    "update" => {
+                        if core.updates.available_version().is_some() {
+                            core.install_update();
+                        } else {
+                            // the result shows on the page, and in this item's text if there is one
+                            let core = Arc::clone(&core);
+                            std::thread::spawn(move || { let _ = core.updates.check(); });
+                            open_controls(handle);
+                        }
                     }
                     "quit" => {
                         core.close_device();
