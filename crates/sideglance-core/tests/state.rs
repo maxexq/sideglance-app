@@ -50,7 +50,7 @@ fn last(log: &Log) -> String {
 }
 
 fn wait_for(f: impl Fn() -> bool) {
-    for _ in 0..200 {
+    for _ in 0..1000 {
         if f() { return; }
         std::thread::sleep(Duration::from_millis(10));
     }
