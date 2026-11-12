@@ -12,8 +12,11 @@
 
   // Served by the Sideglance app, the page talks to it directly. Hosted elsewhere (for example Cloudflare Pages),
   // it reaches the server on this computer, and falls back to a demo when there is none.
-  const HOSTED = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-  const API = HOSTED ? 'http://127.0.0.1:8765' : '';
+  // Inside the desktop app the page comes from the app itself (tauri://localhost on macOS,
+  // http://tauri.localhost on Windows) and calls the app's local server directly.
+  const IN_APP = location.protocol === 'tauri:' || location.hostname === 'tauri.localhost';
+  const HOSTED = !IN_APP && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  const API = HOSTED || IN_APP ? 'http://127.0.0.1:8765' : '';
   let demo = $state(false);
 
   async function request(path, options) {

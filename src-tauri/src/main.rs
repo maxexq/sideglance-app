@@ -38,8 +38,9 @@ fn open_controls(handle: &AppHandle) {
         let _ = window.set_focus();
         return;
     }
-    let url = format!("http://localhost:{}", http::PORT).parse().unwrap();
-    let built = WebviewWindowBuilder::new(handle, "main", WebviewUrl::External(url))
+    // The page is bundled in the app, so the window shows it even before the local server is up;
+    // it then talks to the server on 127.0.0.1 and reconnects by itself.
+    let built = WebviewWindowBuilder::new(handle, "main", WebviewUrl::App("index.html".into()))
         .title("Sideglance")
         .inner_size(1180.0, 860.0)
         .min_inner_size(380.0, 600.0)
