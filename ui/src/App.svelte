@@ -681,7 +681,7 @@
 
 
   .draw { display: flex; flex-wrap: wrap; gap: 28px; width: 100%; }
-  .canvas { width: min(100%, 340px); background: #05060a; padding: 12px; border-radius: 14px; box-sizing: border-box; }
+  .canvas { align-self: flex-start; width: min(100%, 340px); background: #05060a; padding: 12px; border-radius: 14px; box-sizing: border-box; }
   .tools { display: flex; flex-direction: column; gap: 18px; align-items: flex-start; flex: 1; min-width: 220px; }
 
   .score { display: flex; flex-wrap: wrap; gap: 32px; }
