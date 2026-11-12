@@ -28,7 +28,7 @@
 
   const BLANK = Array(256).fill('#000000');
   const TABS = [
-    ['usage', 'AI usage'], ['weather', 'Weather'], ['timer', 'Timer'], ['notify', 'Notifications'], ['clock', 'Clock'], ['light', 'Light'],
+    ['usage', 'AI usage'], ['weather', 'Weather'], ['system', 'Computer'], ['timer', 'Timer'], ['notify', 'Notifications'], ['clock', 'Clock'], ['light', 'Light'],
     ['draw', 'Draw'], ['score', 'Score'],
   ];
   const CLOCKS = ['Full screen', 'Rainbow', 'Boxed', 'Square analog', 'Inverted', 'Round analog'];
@@ -39,6 +39,7 @@
     ['host', 'From this computer', 'One frame is sent per step. Use this if notifications do not blink.'],
   ];
   const SHOWING = {
+    system: 'this computer',
     usage: 'AI usage', timer: 'the timer', clock: 'the clock', light: 'a solid color', off: 'off',
     vj: 'an effect', score: 'the score', pixels: 'your drawing', image: 'your image',
     cloud: 'the Cloud channel', custom: 'the Custom channel', visualizer: 'the visualizer', 'clock-weather': 'the clock',
@@ -318,7 +319,7 @@
   $effect(() => {
     if (status.mode === lastMode) return;
     lastMode = status.mode;
-    if (['usage', 'timer', 'weather'].includes(status.mode)) tab = status.mode;
+    if (['usage', 'timer', 'weather', 'system'].includes(status.mode)) tab = status.mode;
     if (status.mode === 'timer') timerKind = 'countdown';
   });
   let lastPomodoro = false;
@@ -467,6 +468,34 @@
           </div>
         </details>
         {/if}
+
+      {:else if tab === 'system'}
+        {@const sys = status.system}
+        <h2>Computer</h2>
+        <div class="weather-now">
+          <div class="mini"><PixelGrid pixels={sys?.face ?? BLANK} label="Preview of the Computer face" /></div>
+          <div class="card-text">
+            {#if sys?.cpu != null}
+              <p class="reading">CPU {Math.round(sys.cpu)}%, memory {Math.round(sys.ram)}%</p>
+            {:else}
+              <p class="help">Shows how busy this computer is: CPU on top (C), memory below (R). It updates every few seconds while it shows.</p>
+            {/if}
+            {#if sys?.battery}
+              <p class="help">Battery {Math.round(sys.battery.percent)}%{sys.battery.charging ? ', charging' : ''}.</p>
+            {/if}
+          </div>
+        </div>
+        {#if status.mode === 'system' && !status.notification}
+          <button disabled={busy} onclick={() => post('/api/system', { on: false }, 'Computer stopped')}>Stop showing the computer</button>
+        {:else}
+          <button class="go" disabled={busy || demo} onclick={() => post('/api/system', { on: true }, 'Computer shown')}>Show the computer</button>
+        {/if}
+        <p class="help">
+          {sys?.battery
+            ? 'When the battery drops below 15% and it is not charging, the Battery low notification shows, at most every 30 minutes.'
+            : 'On a laptop, the Battery low notification shows when its battery drops below 15% and it is not charging.'}
+          The Ditoo Pro does not report its own battery.
+        </p>
 
       {:else if tab === 'weather'}
         {@const w = status.weather}
@@ -862,10 +891,13 @@
   .link input[type='radio'] { accent-color: var(--blue); width: 18px; height: 18px; margin: 0; padding: 0; }
   code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; background: #d6dcea; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
   main { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
-  .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 2px solid var(--ink); }
+  /* one row that scrolls sideways when the tabs do not fit, rather than a second row */
+  .tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px; border-bottom: 2px solid var(--ink); }
+  .tabs::-webkit-scrollbar { display: none; }
   .tabs button {
-    border: 0; background: none; box-shadow: none; border-radius: 8px 8px 0 0; padding: 9px 14px;
-    font: 500 16px 'Chakra Petch', sans-serif; color: var(--soft);
+    flex: none; white-space: nowrap;
+    border: 0; background: none; box-shadow: none; border-radius: 8px 8px 0 0; padding: 9px 10px;
+    font: 500 15px 'Chakra Petch', sans-serif; color: var(--soft);
   }
   .tabs button:hover:not(:disabled) { color: var(--ink); background: #d6dcea; box-shadow: none; }
   .tabs button.on:hover:not(:disabled) { background: var(--ink); color: #fff; box-shadow: none; }

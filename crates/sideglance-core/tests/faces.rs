@@ -204,3 +204,37 @@ fn weather_settings_switch_between_automatic_and_set() {
     assert!(weather::save_settings(&c, &json!({"auto": true})).unwrap().auto);
     assert!(weather::save_settings(&c, &json!({"latitude": 95, "longitude": 0})).is_err());
 }
+
+// ----- this computer -----
+
+use sideglance_core::system::{Battery, BatteryWatch, BATTERY_ALERT_COOLDOWN_SECONDS};
+
+#[test]
+fn computer_face_reads_like_a_usage_face() {
+    let f = render::system_face(42.0, 93.0);
+    let label = render::SYSTEM_LABEL;
+    assert_eq!(f.get(1, 1), label);                       // C at the top left
+    assert_eq!(f.get(0, 9), label);                       // R below it
+    assert_eq!(f.get(0, 7), [255, 255, 255]);             // CPU bar, white under 70 %
+    assert_eq!(f.get(0, 15), [255, 45, 45]);              // memory bar, red from 90 %
+}
+
+#[test]
+fn battery_low_shows_once_then_after_the_cooldown() {
+    let mut w = BatteryWatch::default();
+    let low = Some(Battery { percent: 12.0, charging: false });
+    assert!(!w.check(Some(Battery { percent: 40.0, charging: false }), 0.0));
+    assert!(w.check(low, 60.0));
+    assert!(!w.check(low, 120.0));
+    assert!(w.check(low, 60.0 + BATTERY_ALERT_COOLDOWN_SECONDS));
+    assert!(!w.check(Some(Battery { percent: 12.0, charging: true }), 5000.0)); // plugged in
+    assert!(!w.check(None, 6000.0));                                              // no battery
+}
+
+#[test]
+fn battery_low_notification() {
+    let e = sideglance_core::notifications::get("battery-low").unwrap();
+    let steps = sideglance_core::notifications::steps(e);
+    assert_eq!(steps.len(), 7);
+    assert_ne!(steps[0].0, steps[1].0);    // the red level blinks
+}

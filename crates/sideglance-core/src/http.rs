@@ -180,6 +180,11 @@ pub fn post(app: &Arc<App>, path: &str, body: &Value) -> Result<bool, String> {
         let on = body["on"].as_bool().unwrap_or(false);
         app.set_weather(on);
         app.config.update(&[("start_with", if on { json!("weather") } else { Value::Null })]).map_err(|e| e.to_string())?;
+    } else if path == "/api/system" {
+        app.dismiss();
+        let on = body["on"].as_bool().unwrap_or(false);
+        app.set_system(on);
+        app.config.update(&[("start_with", if on { json!("system") } else { Value::Null })]).map_err(|e| e.to_string())?;
     } else if path == "/api/weather/settings" {
         app.weather_settings(body)?;
     } else if path == "/api/timer" {

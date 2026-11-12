@@ -99,6 +99,20 @@ pub fn events() -> &'static Vec<Event> {
                 from_claude: false,
             },
             Event {
+                id: "battery-low",
+                label: "Battery low",
+                behavior: format!("Red level blinks {FAILED_BLINKS} times, then stays for {}\u{a0}s", SETTLE_MS / 1000),
+                steps: {
+                    let mut steps: Vec<Step> = (0..FAILED_BLINKS).flat_map(|_| [
+                        Step { ms: CURSOR_BLINK_MS, hide: Hide::Nothing },
+                        Step { ms: CURSOR_BLINK_MS, hide: Hide::Chars("R") }]).collect();
+                    steps.push(Step { ms: SETTLE_MS, hide: Hide::Nothing });
+                    steps
+                },
+                looping: false,
+                from_claude: false,
+            },
+            Event {
                 id: "timer-finished",
                 label: "Timer finished",
                 behavior: format!("Blinks every {}\u{a0}s until dismissed", secs(TIMER_BLINK_MS)),

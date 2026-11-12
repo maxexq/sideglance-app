@@ -37,7 +37,8 @@ Closing the window keeps Sideglance running. Open the controls again from the tr
 | `claude-waiting` | Claude Code needs your answer | cursor blinks until you go back to Claude Code |
 | `claude-finished` | Claude Code finished | stays for 10 seconds |
 | `job-passed`, `job-failed` | your own scripts | stays for 10 seconds; failed blinks first |
-| `timer-finished` | your own scripts | blinks until dismissed |
+| `timer-finished` | the timers, or your own scripts | blinks until dismissed |
+| `battery-low` | this computer's battery is below 15% | red level blinks, then stays for 10 seconds |
 
 On the **Notifications** tab, click **Connect Claude Code**. This adds hooks to `~/.claude/settings.json` and keeps the old file next to it as `settings.json.sideglance-backup`. Restart Claude Code afterwards. Each hook runs `curl`, which Windows 10 and later and macOS already have:
 
@@ -48,6 +49,8 @@ Send any event from your own scripts the same way, for example `job-passed` at t
 **Weather.** A condition icon and the current temperature, updated every 15 minutes, from [Open-Meteo](https://open-meteo.com) (no key needed). The location is found from your internet address with ipapi.co, ipwho.is or ipinfo.io, tried in turn, or set a city or coordinates on the Weather tab. Choose Celsius or Fahrenheit, and optionally add the weather face after the usage faces. If a fetch fails, the last reading stays; before the first one, the face shows a cloud and `--°`.
 
 **Timer.** A Pomodoro timer (focus 25 minutes, short break 5, long break 15 after the fourth session, all adjustable) with a ring of 60 pixels for the seconds and a dot per session, or a one-off countdown of up to 99 minutes. While a Pomodoro is on, its face covers the other faces. When a phase or the countdown ends, the timer-finished hourglass blinks.
+
+**Computer.** How busy this computer is: CPU use on top (C), memory use below (R), updated every 3 seconds while it shows. On a laptop, the **Battery low** notification shows when the battery drops below 15% and it is not charging, at most every 30 minutes. The Ditoo Pro itself does not report its battery: its firmware ignores the battery query, as [ih8d8/divoom-ditoo-controller](https://github.com/ih8d8/divoom-ditoo-controller) also found.
 
 **The device's own screens.** Clock, light, scoreboard, brightness, and a 16x16 drawing pad.
 

@@ -17,6 +17,7 @@ use crate::playback;
 use crate::pomodoro::{self, Pomodoro};
 use crate::render;
 use crate::usage::{self, Account};
+use crate::system::{self, BatteryWatch, Meter, Sample};
 use crate::weather::{self, Reading, Tracker};
 
 /// The Pomodoro face is redrawn at most once a second, and only when a pixel changed.
@@ -68,6 +69,9 @@ struct Inner {
     // Pomodoro
     pomodoro: Pomodoro,
     pomodoro_sent: Option<Frame>,
+    // this computer
+    system: Option<Sample>,
+    battery: Option<system::Battery>,
 }
 
 /// Fetches usage for every signed-in account: (accounts, notes for accounts that failed).
@@ -83,6 +87,7 @@ pub struct App {
     notification_generation: AtomicU64,
     pomodoro_loop: AtomicU64,
     fetch: Fetch,
+    meter: Meter,
 }
 
 fn unix_now() -> i64 {
@@ -127,6 +132,8 @@ impl App {
                 weather_place: (None, None, String::new()),
                 pomodoro,
                 pomodoro_sent: None,
+                system: None,
+                battery: None,
             }),
             config,
             weather: Mutex::new(tracker),
@@ -134,6 +141,7 @@ impl App {
             notification_generation: AtomicU64::new(0),
             pomodoro_loop: AtomicU64::new(0),
             fetch,
+            meter: Meter::default(),
         })
     }
 
@@ -210,7 +218,7 @@ impl App {
         let generation = self.mode_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let mut inner = self.lock();
         inner.mode = mode;
-        if mode == "manual" && matches!(inner.showing.as_deref(), Some("usage" | "weather" | "timer")) {
+        if mode == "manual" && matches!(inner.showing.as_deref(), Some("usage" | "weather" | "timer" | "system")) {
             inner.showing = None;
         }
         if mode != "timer" {
@@ -336,6 +344,57 @@ impl App {
         Ok(())
     }
 
+    // ----- this computer -----
+
+    fn sample_system(&self) -> Sample {
+        let sample = self.meter.sample();
+        self.lock().system = Some(sample);
+        sample
+    }
+
+    /// Show CPU and memory use, redrawn every few seconds.
+    pub fn set_system(self: &Arc<Self>, on: bool) {
+        if !on {
+            self.new_mode("manual");
+            return;
+        }
+        let generation = self.new_mode("system");
+        let app = Arc::clone(self);
+        std::thread::spawn(move || {
+            app.sample_system(); // CPU use is measured between two reads
+            let mut sent: Option<Frame> = None;
+            while app.wait_in_mode(generation, system::REFRESH_SECONDS) {
+                let s = app.sample_system();
+                let face = render::system_face(s.cpu, s.ram);
+                if sent.as_ref() != Some(&face) {
+                    let _ = app.set_frames(vec![face.clone()], "system", 4000);
+                    sent = Some(face);
+                }
+            }
+        });
+    }
+
+    /// Check this computer's battery every minute, whatever is on screen, and show battery-low
+    /// when it runs down. Call once at startup.
+    pub fn watch_battery(self: &Arc<Self>) {
+        let app = Arc::clone(self);
+        std::thread::spawn(move || {
+            let mut watch = BatteryWatch::default();
+            let start = Instant::now();
+            loop {
+                let battery = system::battery();
+                if battery.is_none() {
+                    return; // a computer without a battery
+                }
+                app.lock().battery = battery;
+                if watch.check(battery, start.elapsed().as_secs_f64()) {
+                    let _ = app.notify("battery-low");
+                }
+                std::thread::sleep(Duration::from_secs_f64(system::BATTERY_CHECK_SECONDS));
+            }
+        });
+    }
+
     // ----- countdown timer -----
 
     pub fn set_timer(self: &Arc<Self>, minutes: i64) {
@@ -398,6 +457,7 @@ impl App {
         match saved.as_ref().map(|s| s.mode) {
             Some("usage") => return self.set_usage(true),
             Some("weather") => return self.set_weather(true),
+            Some("system") => return self.set_system(true),
             _ => {}
         }
         self.new_mode("manual");
@@ -688,6 +748,11 @@ impl App {
             "timer_left": Self::timer_left(&inner),
             "playback": self.playback_mode(),
             "weather": self.weather_status(&inner),
+            "system": {
+                "cpu": inner.system.map(|s| s.cpu), "ram": inner.system.map(|s| s.ram),
+                "battery": inner.battery.or(inner.system.and_then(|s| s.battery)),
+                "face": inner.system.map(|s| render::system_face(s.cpu, s.ram).hex()),
+            },
             "pomodoro": pomodoro,
             "notification": null,
         });
@@ -741,6 +806,8 @@ impl App {
                 "is_day": r.is_day, "place": r.place,
                 "age_seconds": r.fetched_at.map(|t| (weather::wall_clock() - t).max(0.0) as i64)})),
             "pomodoro": pomodoro,
+            "system": {"cpu_percent": inner.system.map(|s| s.cpu), "ram_percent": inner.system.map(|s| s.ram),
+                       "battery": inner.battery.or(inner.system.and_then(|s| s.battery))},
         })
     }
 

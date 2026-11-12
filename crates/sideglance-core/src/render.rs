@@ -14,6 +14,9 @@ const RED: Rgb = [255, 45, 45];
 const BLUE: Rgb = [60, 140, 255];
 const EMPTY: Rgb = [38, 38, 38];
 
+/// Labels on the Computer face.
+pub const SYSTEM_LABEL: Rgb = [170, 130, 255];
+
 pub fn account_color(id: &str) -> Rgb {
     if id == "codex" { CODEX_LABEL } else { CLAUDE_LABEL }
 }
@@ -22,6 +25,8 @@ fn glyph(ch: char) -> &'static [&'static str] {
     match ch {
         'D' => &["### ", "#  #", "#  #", "#  #", "### "],
         'W' => &["#   #", "#   #", "# # #", "## ##", "#   #"],
+        'C' => &[" ###", "#   ", "#   ", "#   ", " ###"],
+        'R' => &["### ", "#  #", "### ", "# # ", "#  #"],
         '0' => &["###", "# #", "# #", "# #", "###"],
         '1' => &[" #", "##", " #", " #", " #"],
         '2' => &["###", "  #", "###", "#  ", "###"],
@@ -292,5 +297,15 @@ pub fn pomodoro_face(phase: &str, seconds_left: i64, sessions_completed: usize, 
             }
         }
     }
+    f
+}
+
+// ---------- this computer ----------
+
+/// CPU use on top (C), memory use below (R), drawn like a usage face.
+pub fn system_face(cpu: f64, ram: f64) -> Frame {
+    let mut f = Frame::default();
+    draw_block(&mut f, 1, 'C', cpu, None, 1, 1, SYSTEM_LABEL);
+    draw_block(&mut f, 9, 'R', ram, None, 1, 1, SYSTEM_LABEL);
     f
 }

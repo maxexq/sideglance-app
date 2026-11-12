@@ -90,11 +90,13 @@ fn main() {
     {
         let core = Arc::clone(&core);
         std::thread::spawn(move || {
-            if core.config.string("start_with") == "usage" {
-                core.set_usage(true);
-            } else {
-                core.try_connect();
+            match core.config.string("start_with").as_str() {
+                "usage" => core.set_usage(true),
+                "weather" => core.set_weather(true),
+                "system" => core.set_system(true),
+                _ => core.try_connect(),
             }
+            core.watch_battery();
         });
     }
 

@@ -17,6 +17,7 @@ pub mod config;
 pub mod usage;
 pub mod weather;
 pub mod pomodoro;
+pub mod system;
 pub mod device;
 pub mod link;
 pub mod hooks;
