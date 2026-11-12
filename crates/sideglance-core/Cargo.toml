@@ -1,0 +1,17 @@
+[package]
+name = "sideglance-core"
+description = "Sideglance without a window: device protocol, 16x16 renderer, notifications, AI usage, and the local HTTP API."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serialport = { version = "4", default-features = false }
+tiny_http = "0.12"
+ureq = { version = "2", features = ["json"] }
+dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

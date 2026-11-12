@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/sideglance-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/maxexq/sideglance-app"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

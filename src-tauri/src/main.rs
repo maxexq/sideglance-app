@@ -1,0 +1,176 @@
+//! Sideglance desktop app: a tray icon, the control page in a window, and the local server
+//! (from sideglance-core) that talks to the Ditoo Pro and answers Claude Code hooks.
+//!
+//! Started at sign-in with --hidden, it sits in the tray without opening the window.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::sync::Arc;
+
+use rust_embed::RustEmbed;
+use sideglance_core::config::Config;
+use sideglance_core::device::{Device, Divoom, Fake};
+use sideglance_core::http;
+use sideglance_core::state::{self, App};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+
+/// The built control page (ui/dist), inside the app.
+#[derive(RustEmbed)]
+#[folder = "../ui/dist"]
+struct Ui;
+
+const HIDDEN: &str = "--hidden";
+
+fn assets() -> http::Assets {
+    Arc::new(|path: &str| {
+        Ui::get(path).map(|file| (file.data.into_owned(), file.metadata.mimetype().to_string()))
+    })
+}
+
+/// Show the control page, creating its window the first time.
+fn open_controls(handle: &AppHandle) {
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+    let url = format!("http://localhost:{}", http::PORT).parse().unwrap();
+    let built = WebviewWindowBuilder::new(handle, "main", WebviewUrl::External(url))
+        .title("Sideglance")
+        .inner_size(1180.0, 860.0)
+        .min_inner_size(380.0, 600.0)
+        .build();
+    if let Ok(window) = built {
+        let hide = window.clone();
+        // closing the window keeps the app running in the tray
+        window.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = hide.hide();
+            }
+        });
+    }
+}
+
+fn main() {
+    let config = Arc::new(Config::default_location());
+    let device: Box<dyn Device> = if std::env::var("SIDEGLANCE_FAKE").as_deref() == Ok("1") {
+        Box::new(Fake::default())
+    } else {
+        let c = Arc::clone(&config);
+        Box::new(Divoom::new(Box::new(move || c.string("port"))))
+    };
+    let core = App::new(device, Arc::clone(&config), Box::new(state::fetch_usage));
+
+    // the local server: the page, the API for Claude Code hooks, and /api/scene
+    {
+        let core = Arc::clone(&core);
+        std::thread::spawn(move || {
+            if let Err(e) = http::serve(core, assets(), false) {
+                eprintln!("{e}");
+            }
+        });
+    }
+    // show what was chosen last time, or just connect so the page can say whether the device was found
+    {
+        let core = Arc::clone(&core);
+        std::thread::spawn(move || {
+            if core.config.string("start_with") == "usage" {
+                core.set_usage(true);
+            } else {
+                core.try_connect();
+            }
+        });
+    }
+
+    let hidden = std::env::args().any(|a| a == HIDDEN);
+    let tray_core = Arc::clone(&core);
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|handle, _args, _cwd| open_controls(handle)))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN])))
+        .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory); // tray only, no Dock icon
+
+            let handle = app.handle();
+            let starts_at_sign_in = handle.autolaunch().is_enabled().unwrap_or(false);
+            let open = MenuItem::with_id(handle, "open", "Open controls", true, None::<&str>)?;
+            let usage = MenuItem::with_id(handle, "usage", "Show AI usage", true, None::<&str>)?;
+            let dismiss = MenuItem::with_id(handle, "dismiss", "Dismiss notification", true, None::<&str>)?;
+            let autostart = CheckMenuItem::with_id(handle, "autostart", "Start at sign-in", true, starts_at_sign_in, None::<&str>)?;
+            let quit = MenuItem::with_id(handle, "quit", "Quit Sideglance", true, None::<&str>)?;
+            let menu = Menu::with_items(handle, &[
+                &open, &PredefinedMenuItem::separator(handle)?, &usage, &dismiss,
+                &PredefinedMenuItem::separator(handle)?, &autostart, &quit,
+            ])?;
+            let core = Arc::clone(&tray_core);
+            let check = autostart.clone();
+            TrayIconBuilder::with_id("main")
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+                .tooltip("Sideglance")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |handle, event| match event.id().as_ref() {
+                    "open" => open_controls(handle),
+                    "usage" => {
+                        core.dismiss();
+                        core.set_usage(true);
+                        let _ = core.config.update(&[("start_with", "usage".into())]);
+                    }
+                    "dismiss" => {
+                        core.dismiss();
+                    }
+                    "autostart" => {
+                        let launcher = handle.autolaunch();
+                        let on = launcher.is_enabled().unwrap_or(false);
+                        let _ = if on { launcher.disable() } else { launcher.enable() };
+                        let _ = check.set_checked(launcher.is_enabled().unwrap_or(!on));
+                    }
+                    "quit" => {
+                        core.close_device();
+                        handle.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        open_controls(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // The first run turns on start at sign-in; the tray menu turns it off.
+            let first_run = !core_first_run_done(&tray_core);
+            if first_run {
+                let _ = handle.autolaunch().enable();
+                let _ = autostart.set_checked(true);
+            }
+            if !hidden {
+                open_controls(handle);
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("Sideglance could not start")
+        .run(|_handle, event| {
+            // keep running in the tray when the last window closes
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
+}
+
+/// True after the first run; records it so the first run happens once.
+fn core_first_run_done(core: &App) -> bool {
+    if core.config.load().contains_key("first_run_done") {
+        return true;
+    }
+    let _ = core.config.update(&[("first_run_done", true.into())]);
+    false
+}

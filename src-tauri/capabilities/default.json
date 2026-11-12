@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The control page is served by the app's own local server and needs no Tauri commands.",
+  "windows": [],
+  "permissions": []
+}
