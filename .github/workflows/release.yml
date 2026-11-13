@@ -1,12 +1,11 @@
 # Builds the Windows and macOS installers and attaches them to a draft GitHub release.
-# Start it by pushing a tag:  git tag v0.1.0 && git push origin v0.1.0
+# Start it from Actions > Release > Run workflow. It does not run on tags: publishing the draft
+# creates the tag, and a run then would build again over the published files.
 # The release stays a draft until you publish it on GitHub. Installed apps see a new version
 # only after it is published, through latest.json on the newest release.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -56,8 +55,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: Sideglance ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          tagName: v__VERSION__
+          releaseName: Sideglance v__VERSION__
+          # the tag made on publishing points at the commit that was built
+          releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Unsigned build. See "Install" in the README for the one-time warning on Windows and macOS.
           releaseDraft: true

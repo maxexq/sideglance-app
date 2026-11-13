@@ -133,7 +133,8 @@ The core's tests compare its output with the Python version byte for byte (proto
 ## Releases
 
 1. Raise `version` in `Cargo.toml` and `src-tauri/tauri.conf.json`.
-2. In GitHub, open **Actions > Release > Run workflow**, or push a tag (`git tag v0.4.0 && git push origin v0.4.0`).
+2. In GitHub, open **Actions > Release > Run workflow**. If a draft for that version is left from a
+   failed run, delete it first, so the release points at the commit that was built.
    The workflow builds both installers, signs the update files, and attaches them with
    `latest.json` to a draft release.
 3. Publish the draft. Installed apps find the new version through `latest.json` on the newest
