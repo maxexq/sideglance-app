@@ -168,8 +168,28 @@ fn strings(v: &Value) -> Vec<String> {
     }).collect()).unwrap_or_default()
 }
 
+/// Routes that put something on the display. If someone pressed the device's button to
+/// another channel, these bring it back; settings and brightness do not.
+fn takes_screen(path: &str, body: &Value) -> bool {
+    const SETTINGS: &[&str] = &["/api/tokens", "/api/port", "/api/hooks", "/api/playback", "/api/update",
+        "/api/weather/settings", "/api/pomodoro/settings", "/api/notify/dismiss", "/api/notify/clear",
+        "/api/notify/resume"];
+    if SETTINGS.contains(&path) {
+        return false;
+    }
+    match path {
+        "/api/command" => !["brightness", "volume", "time"].contains(&body["cmd"].as_str().unwrap_or("")),
+        "/api/usage" | "/api/weather" | "/api/system" => body["on"].as_bool().unwrap_or(false),
+        "/api/notify" => !["dismiss", "clear", "resume"].contains(&body["event"].as_str().unwrap_or("")),
+        _ => true,
+    }
+}
+
 /// One POST. Ok(false) means the route does not exist.
 pub fn post(app: &Arc<App>, path: &str, body: &Value) -> Result<bool, String> {
+    if takes_screen(path, body) {
+        app.take_screen();
+    }
     if path == "/api/usage" {
         app.dismiss(); // choosing what to show dismisses any notification
         let on = body["on"].as_bool().unwrap_or(false);
@@ -211,6 +231,8 @@ pub fn post(app: &Arc<App>, path: &str, body: &Value) -> Result<bool, String> {
     } else if path == "/api/hooks" {
         // connect or disconnect Claude Code
         if body["install"].as_bool().unwrap_or(true) { crate::hooks::install()? } else { crate::hooks::uninstall()? }
+    } else if path == "/api/screen" {
+        app.bring_back(); // take_screen already ran for this route
     } else if path == "/api/update" {
         match body["action"].as_str().unwrap_or("check") {
             "check" => { app.updates.check()?; }

@@ -213,6 +213,7 @@
 
   let headline = $derived(
     !online ? "Can't reach Sideglance"
+      : status.away ? 'The device is on another channel'
       : status.notification ? status.notification_label
       : pomo?.active ? `${PHASE[pomo.phase]}, ${clockText(pomo.seconds_left)}`
       : status.showing ? (status.showing === 'off' ? 'Screen is off' : `Showing ${SHOWING[status.showing] ?? status.showing}`)
@@ -386,6 +387,10 @@
     <h1>{headline}</h1>
     {#if !online}
       <p class="help">Open the Sideglance app. This page reconnects by itself.</p>
+    {:else if status.away}
+      <p class="help">The button on the device moved it away from Sideglance. Press the button until
+        Sideglance comes back, or choose anything here.</p>
+      <button class="quiet" disabled={busy} onclick={() => post('/api/screen', {}, 'Sideglance is back')}>Bring Sideglance back</button>
     {:else if status.error}
       <p class="help bad">{status.error}</p>
     {:else if status.notification}

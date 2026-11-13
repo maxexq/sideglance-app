@@ -151,6 +151,7 @@ fn main() {
                 _ => core.try_connect(),
             }
             core.watch_battery();
+            core.watch_screen();
         });
     }
 
@@ -188,6 +189,7 @@ fn main() {
                 .on_menu_event(move |handle, event| match event.id().as_ref() {
                     "open" => open_controls(handle),
                     "usage" => {
+                        core.take_screen();
                         core.dismiss();
                         core.set_usage(true);
                         let _ = core.config.update(&[("start_with", "usage".into())]);

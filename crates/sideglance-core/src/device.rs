@@ -15,6 +15,11 @@ pub trait Device: Send {
     fn show(&mut self, frames: &[Frame], durations_ms: &[u32]) -> Result<(), String>;
     /// A native command, such as brightness, light or off.
     fn command(&mut self, name: &str, args: &[String]) -> Result<(), String>;
+    /// The channel the device shows now, if it can say. Changes when someone presses its button.
+    /// Asks only over a link that is already open.
+    fn channel(&mut self) -> Option<u8> { None }
+    /// Go to a channel, so that the next picture is seen.
+    fn switch_to(&mut self, _channel: u8) -> Result<(), String> { Ok(()) }
 }
 
 /// Pause between packets.
@@ -83,7 +88,32 @@ fn now_local() -> (u16, u8, u8, u8, u8, u8) {
     (n.year() as u16, n.month() as u8, n.day() as u8, n.hour() as u8, n.minute() as u8, n.second() as u8)
 }
 
+/// How long to wait for the answer to a channel query.
+const ANSWER_WAIT: Duration = Duration::from_millis(400);
+
 impl Device for Divoom {
+    fn channel(&mut self) -> Option<u8> {
+        let link = self.link.as_mut()?;
+        link.read(Duration::from_millis(5)); // drop answers to earlier packets
+        if link.write(&protocol::channel_query()).is_err() {
+            self.link = None;
+            return None;
+        }
+        let until = std::time::Instant::now() + ANSWER_WAIT;
+        let mut got = Vec::new();
+        while std::time::Instant::now() < until {
+            got.extend(link.read(Duration::from_millis(60)));
+            if let Some(c) = protocol::parse_channel(&got) {
+                return Some(c);
+            }
+        }
+        None
+    }
+
+    fn switch_to(&mut self, channel: u8) -> Result<(), String> {
+        self.send(&[protocol::switch_channel(channel)])
+    }
+
     fn connect(&mut self) -> Result<(), String> {
         if self.link.is_none() {
             let (port, mut link) = link::connect(&(self.setting)())?;

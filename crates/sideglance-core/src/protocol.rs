@@ -98,6 +98,22 @@ pub fn animation_packets(frames: &[Frame], delays_ms: &[u32]) -> Result<Vec<Vec<
         .collect())
 }
 
+/// Ask which channel the device shows. It answers `04 46 55 CC ...`.
+pub fn channel_query() -> Vec<u8> {
+    packet(&[0x46])
+}
+
+/// Switch to a channel with its saved settings: 0 clock, 1 light, 2 cloud, 3 effects,
+/// 4 visualizer, 5 animation, 6 scoreboard.
+pub fn switch_channel(channel: u8) -> Vec<u8> {
+    packet(&[0x45, channel])
+}
+
+/// The channel in an answer to `channel_query`, if the bytes hold one.
+pub fn parse_channel(bytes: &[u8]) -> Option<u8> {
+    bytes.windows(4).find(|w| w[0] == 0x04 && w[1] == 0x46 && w[2] == 0x55).map(|w| w[3])
+}
+
 fn number(args: &[String], i: usize, low: i64, high: i64, name: &str) -> Result<i64, String> {
     let text = args.get(i).ok_or(format!("{name} needs a value"))?;
     let n: i64 = text.trim().parse().map_err(|_| format!("{name} must be a number (got '{text}')"))?;

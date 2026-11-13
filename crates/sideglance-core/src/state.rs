@@ -25,6 +25,9 @@ use crate::weather::{self, Reading, Tracker};
 /// One frame is a single packet of about 130 bytes.
 pub const POMODORO_TICK: Duration = Duration::from_secs(1);
 
+/// How often to ask the device which channel it shows, to notice its button.
+pub const SCREEN_CHECK: Duration = Duration::from_secs(2);
+
 /// What the base layer shows, as data, so it can be put back after a notification or a reconnect.
 #[derive(Clone)]
 pub enum Base {
@@ -73,6 +76,11 @@ struct Inner {
     // this computer
     system: Option<Sample>,
     battery: Option<system::Battery>,
+    // the device's button: the channel Sideglance pictures show on, and whether someone moved
+    // the device to another channel since. Pictures are not sent while away.
+    home: Option<u8>,
+    home_tries: u8, // devices that never answer are asked only a few times
+    away: bool,
 }
 
 /// Fetches usage for every signed-in account: (accounts, notes for accounts that failed).
@@ -137,6 +145,9 @@ impl App {
                 pomodoro_sent: None,
                 system: None,
                 battery: None,
+                home: None,
+                home_tries: 0,
+                away: false,
             }),
             config,
             weather: Mutex::new(tracker),
@@ -153,10 +164,28 @@ impl App {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Send pictures, unless someone moved the device to another channel with its button.
+    /// The first picture also tells which channel pictures show on.
+    fn show(inner: &mut Inner, frames: &[Frame], durations: &[u32]) -> Result<(), String> {
+        if inner.away {
+            return Ok(());
+        }
+        let result = inner.device.show(frames, durations);
+        if result.is_ok() && inner.home.is_none() && inner.home_tries < 3 {
+            inner.home_tries += 1;
+            inner.home = inner.device.channel();
+        }
+        result
+    }
+
     fn put(inner: &mut Inner, base: &Base) -> Result<(), String> {
         let result = match base {
-            Base::Frames { frames, durations } => inner.device.show(frames, durations),
-            Base::Command { name, args } => inner.device.command(name, args),
+            Base::Frames { frames, durations } => Self::show(inner, frames, durations),
+            Base::Command { name, args } => {
+                // the device's own clock, light and so on: chosen on the page, so not away
+                inner.away = false;
+                inner.device.command(name, args)
+            }
         };
         inner.error = result.as_ref().err().cloned();
         result
@@ -481,6 +510,75 @@ impl App {
         }
     }
 
+    // ----- the device's button -----
+
+    /// Something was chosen in Sideglance: bring the device back to the Sideglance channel if
+    /// its button moved it elsewhere, so what comes next is seen.
+    pub fn take_screen(&self) {
+        let mut inner = self.lock();
+        let away = inner.away;
+        inner.away = false;
+        let Some(home) = inner.home else { return };
+        let now = if away { None } else { inner.device.channel() };
+        if now != Some(home) {
+            let _ = inner.device.switch_to(home);
+        }
+    }
+
+    /// One look at the device's channel. Someone pressing its button to another channel makes
+    /// Sideglance stop sending; pressing on until the Sideglance channel comes back draws the
+    /// Sideglance screen again. Does nothing while a device channel chosen on the page is on.
+    pub fn check_screen(&self) {
+        let mut inner = self.lock();
+        let ours = matches!(inner.base, Some(Base::Frames { .. }))
+            || inner.notification.is_some() || inner.pomodoro.active();
+        let Some(home) = inner.home else { return };
+        if !ours {
+            return;
+        }
+        let Some(now) = inner.device.channel() else { return };
+        if inner.away && now == home {
+            inner.away = false;
+            self.redraw(&mut inner);
+        } else if !inner.away && now != home {
+            inner.away = true;
+        }
+    }
+
+    /// Look at the device's channel every couple of seconds.
+    pub fn watch_screen(self: &Arc<Self>) {
+        let app = Arc::clone(self);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(SCREEN_CHECK);
+            app.check_screen();
+        });
+    }
+
+    /// Everything on top again: the notification if one is on, else what is under it.
+    fn redraw(&self, inner: &mut Inner) {
+        inner.pomodoro_sent = None;
+        let notification = inner.notification.as_ref().map(|n| (n.steps.clone(), n.event.looping));
+        match notification {
+            Some((steps, looping)) if self.playback_mode() != "host" => {
+                let (frames, durations) = playback::device_plan(&steps, looping, inner.device.max_frame_ms());
+                let _ = Self::show(inner, &frames, &durations);
+            }
+            Some(_) => {} // played from this computer: the next step draws it
+            None => self.restore_base(inner),
+        }
+    }
+
+    /// Back to the Sideglance channel, with what Sideglance shows drawn again.
+    pub fn bring_back(&self) {
+        self.take_screen();
+        let mut inner = self.lock();
+        self.redraw(&mut inner);
+    }
+
+    pub fn away(&self) -> bool {
+        self.lock().away
+    }
+
     // ----- Pomodoro layer -----
 
     fn draw_pomodoro(&self, inner: &mut Inner) {
@@ -494,7 +592,10 @@ impl App {
         if inner.pomodoro_sent.as_ref() == Some(&frame) {
             return; // nothing changed: send nothing
         }
-        let result = inner.device.show(std::slice::from_ref(&frame), &[4000]);
+        if inner.away {
+            return;
+        }
+        let result = Self::show(inner, std::slice::from_ref(&frame), &[4000]);
         inner.error = result.as_ref().err().cloned();
         inner.pomodoro_sent = if result.is_ok() { Some(frame) } else { None }; // retried next tick
     }
@@ -605,7 +706,7 @@ impl App {
             inner.pomodoro_sent = None;
             if !host {
                 let (frames, durations) = playback::device_plan(&steps, event.looping, inner.device.max_frame_ms());
-                let result = inner.device.show(&frames, &durations);
+                let result = Self::show(&mut inner, &frames, &durations);
                 inner.error = result.err();
             }
         }
@@ -620,7 +721,7 @@ impl App {
                     |frame| {
                         let mut inner = app.lock();
                         if still(id) {
-                            let _ = inner.device.show(std::slice::from_ref(frame), &[4000]);
+                            let _ = Self::show(&mut inner, std::slice::from_ref(frame), &[4000]);
                         }
                     },
                     |seconds| {
@@ -758,6 +859,7 @@ impl App {
                 "face": inner.system.map(|s| render::system_face(s.cpu, s.ram).hex()),
             },
             "pomodoro": pomodoro,
+            "away": inner.away,
             "update": self.updates.status(),
             "notification": null,
         });

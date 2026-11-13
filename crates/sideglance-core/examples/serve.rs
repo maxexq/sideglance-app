@@ -45,6 +45,7 @@ fn main() {
         app.set_usage(true);
     }
     app.watch_battery();
+    app.watch_screen();
     println!("Sideglance is running at http://localhost:{}", http::PORT);
     if let Err(e) = http::serve(app, assets, false) {
         eprintln!("{e}");

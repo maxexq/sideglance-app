@@ -73,6 +73,14 @@ Every face is drawn the same way as in the Python version: the tests compare the
 
 Stop the Python server first, because both use port 8765. In the Python folder, run `python autostart.py uninstall`. The app's settings are separate, in the folder below, so set your location and timer lengths again in the app.
 
+### The button on the device
+
+Pressing the button on the Ditoo moves it through its own channels (clock, light, effects and so
+on). Sideglance notices within about 2 seconds and stops sending, so it does not pull the screen
+back. Press the button until the animation channel comes round again and Sideglance draws its
+screen there. Choosing anything on the control page, a notification from Claude Code, or **Bring
+Sideglance back** also returns the device to Sideglance.
+
 ### One display, one computer
 
 The Ditoo Pro shows up in Bluetooth twice: an entry ending in **Audio** (the speaker) and one ending in **Light** (the display). Sideglance needs the **Light** one, and it can be connected to one computer at a time. To move it to another computer, disconnect it in the first computer's Bluetooth settings, turn the Ditoo off and on, then connect it on the second.
