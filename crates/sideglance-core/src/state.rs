@@ -95,6 +95,8 @@ pub struct App {
     mode_generation: AtomicU64,
     notification_generation: AtomicU64,
     pomodoro_loop: AtomicU64,
+    /// One Pomodoro step at a time, so a finished phase is announced before anyone looks.
+    pomodoro_stepping: Mutex<()>,
     fetch: Fetch,
     meter: Meter,
     /// Newer versions of the app; the desktop app plugs in the updater.
@@ -154,6 +156,7 @@ impl App {
             mode_generation: AtomicU64::new(0),
             notification_generation: AtomicU64::new(0),
             pomodoro_loop: AtomicU64::new(0),
+            pomodoro_stepping: Mutex::new(()),
             fetch,
             meter: Meter::default(),
             updates: Updates::default(),
@@ -654,6 +657,7 @@ impl App {
     /// One tick: end the phase if its time is up (with the notification), then redraw if needed.
     /// False when the Pomodoro is off.
     pub fn pomodoro_step(self: &Arc<Self>) -> bool {
+        let _one_at_a_time = self.pomodoro_stepping.lock().unwrap_or_else(|p| p.into_inner());
         let s = pomodoro::settings(&self.config);
         let finished = {
             let mut inner = self.lock();
